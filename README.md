@@ -387,4 +387,29 @@ az k8s-extension create \
     --name azurepolicy 
 ```
 
-NOTE: demo for Azure Policies is still on the way... meanwhile, you can check the complience status in Azure Portal.
+Now, you can easily test with one of the existing pocilies, for instance, the one that enforces the use of requests and limits in pods. To do so:
+
+1. Remove the demo namespace in either AKS or ARO cluster (I will use ARO cluster in this example):
+
+Ensure you are logged in the ARO cluster:
+
+```bash
+oc login $API_SERVER -u kubeadmin -p $KUBEADMIN_PWD
+```
+
+Delete the namespace:
+
+```bash
+oc delete ns demo
+```
+
+2. Wait for the gitops configuration to recreate the namespace (it will take a few minutes) and check the status of the deployment:
+
+```bash
+kubectl get deployments -n demo -o jsonpath='{.items[*].status}'
+```
+
+You should see an error describing the reason of the failure, which is the policy violation.
+
+3. Finally, you could modify the deployment to add the requests and limits in the git repository and wait for the gitops configuration to recreate the deployment. You should see that the deployment is now running.
+
