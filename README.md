@@ -11,7 +11,7 @@ The high level architecture is the following:
 
 ## Environment variables
 
-We will start by setting a set of environment variables used in the next scenarios. 
+We will start by setting a set of environment variables used in the next scenarios.
 
 Set your owns, but you can use the following as a reference:
 
@@ -20,7 +20,7 @@ export RESOURCE_GROUP=multiplatform-rg
 export AKS_CLUSTER_NAME=aks-mp
 export ARO_CLUSTER_NAME=aro-mp
 export LOCATION=<location>
-```	
+```
 
 ## Create Resource Groups
 
@@ -37,7 +37,7 @@ az aks create \
     --node-count 3 \
     --enable-managed-identity \
     --location $LOCATION \
-    --enable-addons http_application_routing \
+    --enable-app-routing \
     --generate-ssh-keys
 ```
 
@@ -49,11 +49,12 @@ az aks get-credentials --resource-group $RESOURCE_GROUP --name $AKS_CLUSTER_NAME
 
 Set DNS Zone for AKS cluster:
 
+NOTE: If you do not have an exisinting DNS ZONE, create a zone/child zone in the same resource group as the AKS cluster.
+
 ```bash
-export DNS_ZONE=$(az aks show \
-    --resource-group $RESOURCE_GROUP \
-    --name $AKS_CLUSTER_NAME \
-    --query addonProfiles.httpApplicationRouting.config.HTTPApplicationRoutingZoneName -o tsv)
+export ZONENAME=<ZoneName>
+ZONEID=$(az network dns zone show -g $RESOURCE_GROUP -n $ZONENAME --query "id" --output tsv)
+az aks approuting zone add -g $RESOURCE_GROUP -n $AKS_CLUSTER_NAME --ids=${ZONEID} --attach-zones
 ```
 
 ## Create ARO cluster
@@ -80,7 +81,7 @@ az network vnet subnet create \
   --vnet-name aro-vnet \
   --name worker-subnet \
   --address-prefixes 10.0.2.0/23
-```	
+```
 
 2. Create ARO cluster
 
@@ -95,7 +96,7 @@ az aro create \
   --pull-secret @pull-secret.txt
 ```
 
-5. Login to ARO cluster 
+5. Login to ARO cluster
 
 Get the kubeadmin password and API server URL:
 
@@ -124,6 +125,8 @@ oc login $API_SERVER -u kubeadmin -p $KUBEADMIN_PWD
 
 Ensure you are logged in the ARO cluster and run:
 
+NOTE: if problems locally, run it from the cloud shell.
+
 ```bash
 ./tools/aro-connect-to-arc.sh $ARO_CLUSTER_NAME $RESOURCE_GROUP $LOCATION
 ```
@@ -133,7 +136,7 @@ Ensure you are logged in the ARO cluster and run:
 ### Scenario 1: Deploy a simple application using GitOps
 
 1. Install Flux on AKS cluster
-    
+
 ```bash
 az k8s-extension create --name fluxv2  --extension-type microsoft.flux --scope cluster --cluster-name $AKS_CLUSTER_NAME --resource-group $RESOURCE_GROUP --cluster-type managedClusters
 ```
@@ -148,6 +151,7 @@ oc adm policy add-scc-to-user nonroot system:serviceaccount:$NS:source-controlle
 oc adm policy add-scc-to-user nonroot system:serviceaccount:$NS:notification-controller
 oc adm policy add-scc-to-user nonroot system:serviceaccount:$NS:image-automation-controller
 oc adm policy add-scc-to-user nonroot system:serviceaccount:$NS:image-reflector-controller
+
 az k8s-extension create --name fluxv2  --extension-type microsoft.flux --scope cluster --cluster-name $ARO_CLUSTER_NAME --resource-group $RESOURCE_GROUP --cluster-type connectedClusters
 ```
 
@@ -163,7 +167,6 @@ Init the repository url, use your own forked repository:
 export REPO_URL=https://github.com/dsanchor/flux-sample-app
 ```
 
-
 ```bash
 az k8s-configuration flux create -g $RESOURCE_GROUP \
     -c $AKS_CLUSTER_NAME \
@@ -173,8 +176,9 @@ az k8s-configuration flux create -g $RESOURCE_GROUP \
     --scope cluster \
     -u $REPO_URL \
     --branch main  \
-    --kustomization name=app path=./overlays/aks prune=true 
-```	
+    --sync-interval 1m \
+    --kustomization name=app path=./overlays/aks prune=true sync_interval=1m
+```
 
 2. For ARO:
 
@@ -187,26 +191,27 @@ az k8s-configuration flux create -g $RESOURCE_GROUP \
     --scope cluster \
     -u $REPO_URL \
     --branch main  \
-    --kustomization name=app path=./overlays/aro prune=true 
+    --sync-interval 1m \
+    --kustomization name=app path=./overlays/aro prune=true sync_interval=1m
 ```
 
 Test the application by accessing in the browser to the following urls:
 
-```bash	
+```bash
 echo "AKS: http://bgd.$DNS_ZONE"
 echo "ARO: http://bgd-demo.apps.$CLUSTER_DOMAIN.$LOCATION.aroapp.io"
 ```
 
 ### Scenario 2: Load balance traffic between AKS and ARO clusters with Front Door
 
-The next step is to create a Front Door to load balance traffic between AKS and ARO clusters. 
+The next step is to create a Front Door to load balance traffic between AKS and ARO clusters.
 
 Following steps are obtained from [this](https://learn.microsoft.com/en-gb/azure/frontdoor/create-front-door-cli) article.
 
 1. Create a Front Door Profile
 
 ```bash
-az afd profile create --profile-name demoafd --resource-group $RESOURCE_GROUP --sku Standard_AzureFrontDoor 
+az afd profile create --profile-name demoafd --resource-group $RESOURCE_GROUP --sku Standard_AzureFrontDoor
 ```
 
 2. Create a Front Door Endpoint
@@ -237,7 +242,7 @@ az afd origin-group create \
 
 Add AKS origin to origin group:
 
-```bash	
+```bash
 az afd origin create \
     --resource-group $RESOURCE_GROUP \
     --host-name bgd.$DNS_ZONE \
@@ -307,7 +312,7 @@ az afd origin update \
     --profile-name demoafd \
     --origin-group-name demoog \
     --origin-name aks \
-    --priority 2 
+    --priority 2
 ```
 
 ### Scenario 3: Configure managed prometheus and managed grafana in AKS and ARO clusters
@@ -331,7 +336,7 @@ export WORKSPACE_ID=$(az monitor account show \
 az grafana create \
     --name demomg \
     --resource-group $RESOURCE_GROUP \
-    --location $LOCATION 
+    --location $LOCATION
 export GRAFANA_ID=$(az grafana show \
     --name demomg \
     --resource-group $RESOURCE_GROUP \
@@ -351,7 +356,6 @@ az aks update --enable-azure-monitor-metrics \
 4. Configure ARO cluster
 
 Follow steps from this [guide](https://learn.microsoft.com/en-us/azure/openshift/howto-remotewrite-prometheus).
-
 
 ### Scenario 4: Configure Azure Policies to enforce security and compliance
 
@@ -384,7 +388,7 @@ az k8s-extension create \
     --cluster-name $ARO_CLUSTER_NAME \
     --resource-group $RESOURCE_GROUP \
     --extension-type Microsoft.PolicyInsights \
-    --name azurepolicy 
+    --name azurepolicy
 ```
 
 Now, you can easily test with one of the existing pocilies, for instance, the one that enforces the use of requests and limits in pods. To do so:
@@ -412,4 +416,3 @@ kubectl get deployments -n demo -o jsonpath='{.items[*].status}'
 You should see an error describing the reason of the failure, which is the policy violation.
 
 3. Finally, you could modify the deployment to add the requests and limits in the git repository and wait for the gitops configuration to recreate the deployment. You should see that the deployment is now running.
-
